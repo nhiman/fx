@@ -153,9 +153,16 @@ function render() {
     inLots.style.width = "110px";
     inLots.addEventListener("input", () => {
       p.lots = inLots.value;
-      save();
-      render();
+      save();       // 保存したいなら残す
+      // render();   // ←消す
     });
+
+// フォーカスが外れた/確定したタイミングで再描画
+  inLots.addEventListener("change", () => {
+    save();
+    render();
+  });
+
     tdLots.appendChild(inLots);
 
     const tdEntry = document.createElement("td");
@@ -169,8 +176,14 @@ function render() {
     inEntry.addEventListener("input", () => {
       p.entry = inEntry.value;
       save();
+      // render();   // ←消す
+    });
+
+    inEntry.addEventListener("change", () => {
+      save();
       render();
     });
+
     tdEntry.appendChild(inEntry);
 
     const tdPnl = document.createElement("td");
