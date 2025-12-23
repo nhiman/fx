@@ -31,12 +31,23 @@
       <input id="mid" type="number" inputmode="decimal" step="0.001" placeholder="例: 145.123">
     </label>
 
-    <label>スプレッド(pip):
+    <label>スプレッド:
       <input id="spread" type="number" inputmode="decimal" step="0.01" value="0.01">
     </label>
 
     <label>1lot通貨量:
       <input id="unit" type="number" inputmode="numeric" step="1" value="100000">
+    </label>
+
+    <label>資金の種類:
+      <select id="fundsMode">
+        <option value="BALANCE">口座残高（含み損益なし）</option>
+        <option value="EQUITY">有効証拠金（含み損益込み）</option>
+      </select>
+    </label>
+
+    <label>現在の資金(円):
+      <input id="funds" type="number" inputmode="numeric" step="1" placeholder="例: 1000000">
     </label>
 
     <button id="add">行追加</button>
@@ -48,6 +59,9 @@
     <div>分岐点（Mid換算）: <b id="beMid">-</b></div>
     <div>現在Bid/Ask: <b id="bidask">-</b></div>
     <div>選択合計損益（円）: <b id="pnl">-</b></div>
+    <hr style="border:none;border-top:1px solid #eee;margin:10px 0;">
+    <div>資金が0になる価格（決済価格）: <b id="zeroClose">-</b></div>
+    <div>資金が0になる価格（Mid換算）: <b id="zeroMid">-</b></div>
     <div class="small" id="note"></div>
   </div>
 
