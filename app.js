@@ -1,12 +1,17 @@
 const $ = (id) => document.getElementById(id);
 
-const stateKey = "usdjpy_be_state_v1";
+const stateKey = "usdjpy_be_state_v2";
 
 let positions = []; // {id, selected, lots, entry}
 
 function roundToTick(x, tick) {
   if (!isFinite(x)) return x;
   return Math.round(x / tick) * tick;
+}
+
+function parseNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 function load() {
@@ -16,9 +21,11 @@ function load() {
     const s = JSON.parse(raw);
     positions = Array.isArray(s.positions) ? s.positions : [];
     if (s.side) $("side").value = s.side;
-    if (s.mid) $("mid").value = s.mid;
-    if (s.spread) $("spread").value = s.spread;
-    if (s.unit) $("unit").value = s.unit;
+    if (s.mid != null) $("mid").value = s.mid;
+    if (s.spread != null) $("spread").value = s.spread;
+    if (s.unit != null) $("unit").value = s.unit;
+    if (s.fundsMode) $("fundsMode").value = s.fundsMode;
+    if (s.funds != null) $("funds").value = s.funds;
   } catch {}
 }
 
@@ -29,6 +36,8 @@ function save() {
     mid: $("mid").value,
     spread: $("spread").value,
     unit: $("unit").value,
+    fundsMode: $("fundsMode").value,
+    funds: $("funds").value,
   };
   localStorage.setItem(stateKey, JSON.stringify(s));
 }
@@ -46,11 +55,6 @@ function addRow() {
 function deleteRow(id) {
   positions = positions.filter(p => p.id !== id);
   render();
-}
-
-function parseNum(v) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
 }
 
 // 選択分の分岐点（加重平均）
@@ -84,21 +88,48 @@ function calcPnlJPY(side, bid, ask, unit, p) {
   }
 }
 
+// 資金0になる価格（決済側）を計算（balanceは「口座残高」想定）
+function calcZeroPriceClose(side, selected, unit, balanceJPY) {
+  if (balanceJPY == null) return null;
+
+  let sumQty = 0;       // USD数量
+  let sumEntryQty = 0;  // JPY（entry * qty）
+
+  for (const p of selected) {
+    const L = parseNum(p.lots);
+    const P = parseNum(p.entry);
+    if (L == null || P == null) continue;
+    if (L <= 0) continue;
+
+    const qty = L * unit;
+    sumQty += qty;
+    sumEntryQty += P * qty;
+  }
+
+  if (sumQty === 0) return null;
+
+  if (side === "BUY") {
+    // equity = balance + Σ((bid - entry)*qty) = 0  => bid = (Σ(entry*qty) - balance)/Σqty
+    return (sumEntryQty - balanceJPY) / sumQty; // Bid
+  } else {
+    // equity = balance + Σ((entry - ask)*qty) = 0  => ask = (balance + Σ(entry*qty))/Σqty
+    return (balanceJPY + sumEntryQty) / sumQty; // Ask
+  }
+}
+
 function render() {
   const side = $("side").value; // BUY / SELL
   const mid = parseNum($("mid").value);
   const spread = parseNum($("spread").value) ?? 0.01;
   const unit = parseNum($("unit").value) ?? 100000;
 
-  // tickはUSDJPYの一般的な最小刻み: 0.001（=1 point）を仮定
+  // USDJPYの一般的な最小刻みを仮定（=1 point）
   const tick = 0.001;
 
   let bid = null, ask = null;
   if (mid != null) {
-    bid = mid - spread / 2;
-    ask = mid + spread / 2;
-    bid = roundToTick(bid, tick);
-    ask = roundToTick(ask, tick);
+    bid = roundToTick(mid - spread / 2, tick);
+    ask = roundToTick(mid + spread / 2, tick);
   }
 
   const tbody = $("tbody");
@@ -106,13 +137,10 @@ function render() {
 
   const selected = positions.filter(p => p.selected);
 
+  // 分岐点（選択分）
   const be = calcBreakeven(selected);
-  // 分岐点（決済価格）
-  // BUY: close at Bid => Bid=BE
-  // SELL: close at Ask => Ask=BE
   let beClose = null;
   let beMid = null;
-
   if (be != null) {
     if (side === "BUY") {
       beClose = be;              // Bid
@@ -125,7 +153,7 @@ function render() {
     beMid = roundToTick(beMid, tick);
   }
 
-  // 合計損益
+  // 含み損益（選択分・現在値がある場合）
   let totalPnl = 0;
   let totalOk = true;
 
@@ -151,17 +179,17 @@ function render() {
     inLots.step = "0.01";
     inLots.value = p.lots;
     inLots.style.width = "110px";
+
+    // 入力中にrenderするとフォームが作り直されてフォーカスが飛ぶので、inputではrenderしない
     inLots.addEventListener("input", () => {
       p.lots = inLots.value;
-      save();       // 保存したいなら残す
-      // render();   // ←消す
+      save();
     });
-
-// フォーカスが外れた/確定したタイミングで再描画
-  inLots.addEventListener("change", () => {
-    save();
-    render();
-  });
+    inLots.addEventListener("change", () => {
+      p.lots = inLots.value;
+      save();
+      render();
+    });
 
     tdLots.appendChild(inLots);
 
@@ -173,13 +201,13 @@ function render() {
     inEntry.step = "0.001";
     inEntry.value = p.entry;
     inEntry.style.width = "130px";
+
     inEntry.addEventListener("input", () => {
       p.entry = inEntry.value;
       save();
-      // render();   // ←消す
     });
-
     inEntry.addEventListener("change", () => {
+      p.entry = inEntry.value;
       save();
       render();
     });
@@ -223,18 +251,68 @@ function render() {
     $("bidask").textContent = "-";
   }
 
-  if (bid != null && ask != null && beClose != null && totalOk) {
+  if (bid != null && ask != null && totalOk) {
     $("pnl").textContent = `${Math.round(totalPnl).toLocaleString()}`;
   } else {
     $("pnl").textContent = "-";
   }
 
-  // 注意書き（仕様の明示）
+  // 資金0価格
+  const fundsMode = $("fundsMode").value; // BALANCE / EQUITY
+  const funds = parseNum($("funds").value);
+
+  // 計算に使う「口座残高」を決める
+  // BALANCE: そのまま残高
+  // EQUITY: 残高 = 有効証拠金 - 現在含み損益（※入力したポジションのみで計算）
+  let balanceJPY = null;
+  if (funds != null) {
+    if (fundsMode === "BALANCE") {
+      balanceJPY = funds;
+    } else {
+      // 有効証拠金入力の場合、現在値と含み損益が必要
+      if (bid != null && ask != null && totalOk) {
+        balanceJPY = funds - totalPnl;
+      } else {
+        balanceJPY = null;
+      }
+    }
+  }
+
+  let zeroClose = null;
+  let zeroMid = null;
+
+  const z = calcZeroPriceClose(side, selected, unit, balanceJPY);
+  if (z != null) {
+    if (side === "BUY") {
+      zeroClose = z;             // Bid
+      zeroMid = z + spread / 2;  // Mid
+    } else {
+      zeroClose = z;             // Ask
+      zeroMid = z - spread / 2;  // Mid
+    }
+    zeroClose = roundToTick(zeroClose, tick);
+    zeroMid = roundToTick(zeroMid, tick);
+  }
+
+  $("zeroClose").textContent = (zeroClose == null) ? "-" : zeroClose.toFixed(3);
+  $("zeroMid").textContent = (zeroMid == null) ? "-" : zeroMid.toFixed(3);
+
+  // 注意書き
   const note = [];
-  if (side === "BUY") note.push("買いはBid決済で損益計算。分岐点（決済価格）はBid。");
-  else note.push("売りはAsk決済で損益計算。分岐点（決済価格）はAsk。");
-  note.push("コスト（スワップ/手数料）は0前提。");
-  note.push("分岐点は選択行のロット加重平均。");
+  if (side === "BUY") note.push("買いはBidで評価・決済。");
+  else note.push("売りはAskで評価・決済。");
+  note.push("スワップ/手数料=0前提。");
+  note.push("資金0価格は選択行のみで計算。全体で見たい場合は全選択。");
+
+  if (fundsMode === "EQUITY") {
+    note.push("資金の種類=有効証拠金の場合、現在Midと含み損益から残高を逆算して算出。");
+    if (funds != null && (bid == null || ask == null || !totalOk)) {
+      note.push("有効証拠金モードでは現在Midと各行の入力が揃わないと計算できない。");
+    }
+  } else {
+    note.push("資金の種類=口座残高の場合、その値を残高として直接使用。");
+  }
+
   $("note").textContent = note.join(" ");
 }
 
@@ -248,7 +326,7 @@ function init() {
     render();
   });
 
-  ["side", "mid", "spread", "unit"].forEach(id => {
+  ["side", "mid", "spread", "unit", "fundsMode", "funds"].forEach(id => {
     $(id).addEventListener("input", () => { save(); render(); });
     $(id).addEventListener("change", () => { save(); render(); });
   });
@@ -259,7 +337,6 @@ function init() {
     ];
   }
 
-  // PWA: Service Worker登録
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js");
   }
